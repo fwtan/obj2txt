@@ -107,12 +107,25 @@ for i, file in ipairs(files) do
     local sample_opts = { sample_max = 1, beam_size = 2, temperature = 1.0 }
     local seq = protos.lm:sample(layout_feats, sample_opts)
     local sents = net_utils.decode_sequence(vocab, seq)
-    print(sents[1])
+    -- print(sents[1])
+
+    out_entry = {}
+    out_entry['image_id'] = entry['image_id']
+    out_entry['captions'] = sents[1]
+    out_dict[i] = out_entry
 
     if i > 2 then
         break
     end
 end
+
+json_text = cjson.encode(out_dict)
+print(json_text)
+
+out_file = io.open(opt.output_path, "w")
+io.output(out_file)
+io.write(json_text)
+io.close(out_file)
 
 
 
