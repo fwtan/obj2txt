@@ -114,13 +114,14 @@ for i, file in ipairs(files) do
     out_entry['captions'] = sents[1]
     out_dict[i] = out_entry
 
-    if i > 2 then
-        break
-    end
+    -- if i > 2 then
+    --     break
+    -- end
+    print(i)
 end
 
 json_text = cjson.encode(out_dict)
-print(json_text)
+-- print(json_text)
 
 out_file = io.open(opt.output_path, "w")
 io.output(out_file)
