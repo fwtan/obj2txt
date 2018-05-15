@@ -111,7 +111,7 @@ for i, file in ipairs(files) do
 
     out_entry = {}
     out_entry['image_id'] = entry['image_id']
-    out_entry['captions'] = sents[1]
+    out_entry['caption'] = sents[1]
     out_dict[i] = out_entry
 
     -- if i > 2 then
