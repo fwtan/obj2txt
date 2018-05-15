@@ -58,6 +58,38 @@ protos.cnn:evaluate()
 protos.lm:evaluate()
 protos.layout_encoder:evaluate()
 
+local bbox_coords = torch.FloatTensor(1,96,4):fill(0)
+local full_category = torch.LongTensor(1,96):fill(0)
+
+bbox_coords[{1,1,1}] = 225
+bbox_coords[{1,1,2}] = 252
+bbox_coords[{1,1,3}] = 130
+bbox_coords[{1,1,4}] = 75
+full_category[{1,1}] = COCO_label_dict['bicycle']
+
+bbox_coords[{1,2,1}] = 197
+bbox_coords[{1,2,2}] = 360
+bbox_coords[{1,2,3}] = 132
+bbox_coords[{1,2,4}] = 97
+full_category[{1,2}] = COCO_label_dict['person']
+
+bbox_coords[{1,3,1}] = 405
+bbox_coords[{1,3,2}] = 420
+bbox_coords[{1,3,3}] = 95
+bbox_coords[{1,3,4}] = 93
+full_category[{1,3}] = COCO_label_dict['person']
+
+bbox_coords:div(604.0)
+
+local bbox_coords_T = bbox_coords:transpose(1,2):cuda()
+local data_full_category_T = full_category:transpose(1,2):cuda()
+local layout_feats = protos.layout_encoder:forward({ data_full_category_T, bbox_coords_T })
+local sample_opts = { sample_max = 1, beam_size = 2, temperature = 1.0 }
+local seq = protos.lm:sample(layout_feats, sample_opts)
+local sents = net_utils.decode_sequence(vocab, seq)
+print(sents[1])
+
+
 -- async.http.listen('http://0.0.0.0:' .. opt.port, function(req,res)
 --    print(req.body)
 --    local status, annotations = pcall(cjson.decode, req.body)
