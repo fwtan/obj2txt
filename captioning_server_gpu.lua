@@ -39,7 +39,7 @@ COCO_label_dict = {
     ["toaster"]=71, ["sink"]=72, ["refrigerator"]=73, ["book"]=74, ["clock"]=75, 
     ["vase"]=76, ["scissors"]=77, ["teddy bear"]=78, ["hair drier"]=79, ["toothbrush"]=80}
 opt = {
-    start_from = 'model_idobjname_location.t7',
+    start_from = 'ckt_v1.t7',
     input_dir = 'gt_scene_jsons',
     output_path = 'gt_scene_gen_sents.json',
 }
