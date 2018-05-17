@@ -1,5 +1,6 @@
 local utils = require 'misc.utils'
 local net_utils = {}
+local image = require 'image'
 
 -- take a raw CNN from Caffe and perform surgery. Note: VGG-16 SPECIFIC!
 function net_utils.build_cnn(cnn, opt)
@@ -48,33 +49,37 @@ function net_utils.prepro(imgs, data_augment, on_gpu)
 
   local h,w = imgs:size(3), imgs:size(4)
   local cnn_input_size = 224
+  local imgs_scale = torch.Tensor(imgs:size(1),imgs:size(2),cnn_input_size, cnn_input_size):typeAs(imgs)
 
   -- cropping data augmentation, if needed
   if h > cnn_input_size or w > cnn_input_size then 
-    local xoff, yoff
-    if data_augment then
-      xoff, yoff = torch.random(w-cnn_input_size), torch.random(h-cnn_input_size)
-    else
-      -- sample the center
-      xoff, yoff = math.ceil((w-cnn_input_size)/2), math.ceil((h-cnn_input_size)/2)
-    end
-    -- crop.
-    imgs = imgs[{ {}, {}, {yoff,yoff+cnn_input_size-1}, {xoff,xoff+cnn_input_size-1} }]
+    -- local xoff, yoff
+    -- if data_augment then
+    --   xoff, yoff = torch.random(w-cnn_input_size), torch.random(h-cnn_input_size)
+    -- else
+    --   -- sample the center
+    --   xoff, yoff = math.ceil((w-cnn_input_size)/2), math.ceil((h-cnn_input_size)/2)
+    -- end
+    -- -- crop.
+    -- imgs = imgs[{ {}, {}, {yoff,yoff+cnn_input_size-1}, {xoff,xoff+cnn_input_size-1} }]
+	for i = 1, imgs:size(1) do 
+		imgs_scale[i] = image.scale(imgs[i], cnn_input_size, cnn_input_size)
+	end
   end
 
   -- ship to gpu or convert from byte to float
-  if on_gpu then imgs = imgs:cuda() else imgs = imgs:float() end
+  if on_gpu then imgs_scale = imgs_scale:cuda() else imgs_scale = imgs_scale:float() end
 
   -- lazily instantiate vgg_mean
   if not net_utils.vgg_mean then
     net_utils.vgg_mean = torch.FloatTensor{123.68, 116.779, 103.939}:view(1,3,1,1) -- in RGB order
   end
-  net_utils.vgg_mean = net_utils.vgg_mean:typeAs(imgs) -- a noop if the types match
+  net_utils.vgg_mean = net_utils.vgg_mean:typeAs(imgs_scale) -- a noop if the types match
 
   -- subtract vgg mean
-  imgs:add(-1, net_utils.vgg_mean:expandAs(imgs))
+  imgs_scale:add(-1, net_utils.vgg_mean:expandAs(imgs_scale))
 
-  return imgs
+  return imgs_scale
 end
 
 -- layer that expands features out so we can forward multiple sentences per image

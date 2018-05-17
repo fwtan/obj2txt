@@ -1,0 +1,38 @@
+
+require 'nn'
+require 'nngraph'
+local Align = require 'misc.Align'
+
+
+local Attention = {}
+function Attention.attention(embedding_size, rnn_size, seq_length)
+   
+   local inputs = {}
+   table.insert(inputs, nn.Identity()())
+   table.insert(inputs, nn.Identity()())
+   
+   local seq_embedding = inputs[1] -- seq_length x embedding_size
+   local hidden_state_vec = inputs[2] -- 1*rnn_size
+   
+   local A = Align.align(embedding_size, rnn_size, seq_length)
+   local scores = A({seq_embedding, hidden_state_vec}) -- scores: seq_length*1
+   local scores_transpose = nn.Transpose({1,2})(scores)
+   local probs = nn.SoftMax()(scores_transpose) -- 1*seq_length
+   
+   -- need to transpose both inputs
+   local weighted_sum = nn.MM(true, true)({seq_embedding, probs}) -- embedding_size*1
+   local weighted_sum_tranpose = nn.Transpose({1,2})(weighted_sum)
+   return nn.gModule(inputs, {weighted_sum_tranpose})
+end
+
+function Attention.test()
+   seq_length = 5
+   embedding_size = 2
+   rnn_size = 3
+   seq_embedding = torch.randn(seq_length, embedding_size)
+   hidden_state = torch.randn(1, rnn_size)
+   atten = Attention.attention(embedding_size, rnn_size, seq_length)
+   atten:forward({seq_embedding, hidden_state})
+end
+
+return Attention

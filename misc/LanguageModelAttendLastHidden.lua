@@ -7,7 +7,7 @@ local LSTM = require 'misc.LSTM'
 -- Language Model core
 -------------------------------------------------------------------------------
 
-local layer, parent = torch.class('nn.LayoutEncoderLocation', 'nn.Module')
+local layer, parent = torch.class('nn.LanguageModel', 'nn.Module')
 function layer:__init(opt)
   parent.__init(self)
 
@@ -18,9 +18,10 @@ function layer:__init(opt)
   self.num_layers = utils.getopt(opt, 'num_layers', 1)
   local dropout = utils.getopt(opt, 'dropout', 0)
   -- options for Language Model
-  self.seq_length = utils.getopt(opt, 'layout_encoder_seq_length')
+  self.seq_length = utils.getopt(opt, 'seq_length')
   -- create the core lstm network. note +1 for both the START and END tokens
-  self.core = LSTM.lstm_encoder_with_spatial(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout)
+  -- self.core = LSTM.lstm(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout)
+  self.core = LSTM.lstm_attend_last_hidden_state(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout)
   self.lookup_table = nn.LookupTable(self.vocab_size + 1, self.input_encoding_size)
   self:_createInitState(1) -- will be lazily resized later during forward passes
 end
@@ -44,7 +45,7 @@ end
 
 function layer:createClones()
   -- construct the net clones
-  print('constructing clones inside the LayoutEncoder')
+  print('constructing clones inside the LanguageModel')
   self.clones = {self.core}
   self.lookup_tables = {self.lookup_table}
   for t=2,self.seq_length+2 do
@@ -96,6 +97,7 @@ Returns: a DxN LongTensor with integer elements 1..M,
 where D is sequence length and N is batch (so columns are sequences)
 --]]
 function layer:sample(imgs, opt)
+  local context = imgs:clone()
   local sample_max = utils.getopt(opt, 'sample_max', 1)
   local beam_size = utils.getopt(opt, 'beam_size', 1)
   local temperature = utils.getopt(opt, 'temperature', 1.0)
@@ -147,8 +149,9 @@ function layer:sample(imgs, opt)
     end
 
     local inputs = {xt,unpack(state)}
+    table.insert(inputs, context)
     local out = self.core:forward(inputs)
-    logprobs = out[self.num_state+1] -- last element is the hidden state
+    logprobs = out[self.num_state+1] -- last element is the output vector
     state = {}
     for i=1,self.num_state do table.insert(state, out[i]) end
   end
@@ -288,19 +291,15 @@ returns a (D+2)xNx(M+1) Tensor giving (normalized) log probabilities for the
 next token at every iteration of the LSTM (+2 because +1 for first dummy 
 img forward, and another +1 because of START/END tokens shift)
 --]]
-function layer:updateOutput(inputs)
-  local seq = inputs[1]
-  local spatial = inputs[2]
-  assert(seq:size(1) == spatial:size(1))
-  assert(seq:size(2) == spatial:size(2))
-  -- x, y, width, height
-  assert(spatial:size(3) == 4)
+function layer:updateOutput(input)
+  local imgs = input[1]
+  local context = imgs:clone()
+  local seq = input[2]
   if self.clones == nil then self:createClones() end -- lazily create clones on first forward pass
+
   assert(seq:size(1) == self.seq_length)
   local batch_size = seq:size(2)
-  self.output:resize(self.seq_length+2, batch_size, self.rnn_size)
-
-  assert(self.rnn_size == self.input_encoding_size)
+  self.output:resize(self.seq_length+2, batch_size, self.vocab_size+1)
   
   self:_createInitState(batch_size)
 
@@ -312,22 +311,14 @@ function layer:updateOutput(inputs)
 
     local can_skip = false
     local xt
-    local xt_spatial
     if t == 1 then
       -- feed in the images
-      xt = torch.zeros(batch_size, self.input_encoding_size) -- NxK sized input
-      xt_spatial = torch.zeros(batch_size, spatial:size(3)) -- NxK sized input
-      if self.core:type() == 'torch.CudaTensor' then
-        xt = xt:cuda()
-        xt_spatial = xt_spatial:cuda()
-      end
+      xt = imgs -- NxK sized input
     elseif t == 2 then
       -- feed in the start tokens
       local it = torch.LongTensor(batch_size):fill(self.vocab_size+1)
       self.lookup_tables_inputs[t] = it
       xt = self.lookup_tables[t]:forward(it) -- NxK sized input (token embedding vectors)
-      xt_spatial = torch.zeros(batch_size, spatial:size(3)) -- NxK sized input
-      if self.core:type() == 'torch.CudaTensor' then xt_spatial = xt_spatial:cuda() end
     else
       -- feed in the rest of the sequence...
       local it = seq[t-2]:clone()
@@ -348,47 +339,46 @@ function layer:updateOutput(inputs)
       if not can_skip then
         self.lookup_tables_inputs[t] = it
         xt = self.lookup_tables[t]:forward(it)
-        xt_spatial = spatial[t-2]
       end
     end
 
     if not can_skip then
       -- construct the inputs
       self.inputs[t] = {xt,unpack(self.state[t-1])}
-      table.insert(self.inputs[t], xt_spatial)
+      table.insert(self.inputs[t], context)
       -- forward the network
       local out = self.clones[t]:forward(self.inputs[t])
       -- process the outputs
-      self.output[t] = out[self.num_state] -- last element is the output vector
+      self.output[t] = out[self.num_state+1] -- last element is the output vector
       self.state[t] = {} -- the rest is state
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
       self.tmax = t
     end
   end
-  -- only want the hidden state at the last time-step
-  return self.output[self.tmax]
+
+  return self.output
 end
 
 --[[
 gradOutput is an (D+2)xNx(M+1) Tensor.
 --]]
-function layer:updateGradInput(inputs, gradOutput)
+function layer:updateGradInput(input, gradOutput)
   local dimgs -- grad on input images
-
+  local dcontext = input[1]:clone():zero()
   -- go backwards and lets compute gradients
-  -- gradOutput is the gradient of last hidden state
-  local dstate = {[self.tmax] = {self.init_state[1], gradOutput}} -- this works when init_state is all zeros
+  local dstate = {[self.tmax] = self.init_state} -- this works when init_state is all zeros
   for t=self.tmax,1,-1 do
     -- concat state gradients and output vector gradients at time step t
     local dout = {}
     for k=1,#dstate[t] do table.insert(dout, dstate[t][k]) end
-    -- lstm_encoder outputs {cell_state, hidden_state}
+    table.insert(dout, gradOutput[t])
     local dinputs = self.clones[t]:backward(self.inputs[t], dout)
     -- split the gradient to xt and to state
     local dxt = dinputs[1] -- first element is the input vector
     dstate[t-1] = {} -- copy over rest to state grad
     for k=2,self.num_state+1 do table.insert(dstate[t-1], dinputs[k]) end
     
+    dcontext = dcontext + dinputs[#dinputs]
     -- continue backprop of xt
     if t == 1 then
       dimgs = dxt
@@ -397,9 +387,71 @@ function layer:updateGradInput(inputs, gradOutput)
       self.lookup_tables[t]:backward(it, dxt) -- backprop into lookup table
     end
   end
-
+  dimgs = dimgs + dcontext
   -- we have gradient on image, but for LongTensor gt sequence we only create an empty tensor - can't backprop
-  -- self.gradInput = {dimgs, torch.Tensor()}
-  self.gradInput = {torch.Tensor(), torch.Tensor()}
+  self.gradInput = {dimgs, torch.Tensor()}
+  return self.gradInput
+end
+
+-------------------------------------------------------------------------------
+-- Language Model-aware Criterion
+-------------------------------------------------------------------------------
+
+local crit, parent = torch.class('nn.LanguageModelCriterion', 'nn.Criterion')
+function crit:__init()
+  parent.__init(self)
+end
+
+--[[
+input is a Tensor of size (D+2)xNx(M+1)
+seq is a LongTensor of size DxN. The way we infer the target
+in this criterion is as follows:
+- at first time step the output is ignored (loss = 0). It's the image tick
+- the label sequence "seq" is shifted by one to produce targets
+- at last time step the output is always the special END token (last dimension)
+The criterion must be able to accomodate variably-sized sequences by making sure
+the gradients are properly set to zeros where appropriate.
+--]]
+function crit:updateOutput(input, seq)
+  self.gradInput:resizeAs(input):zero() -- reset to zeros
+  local L,N,Mp1 = input:size(1), input:size(2), input:size(3)
+  local D = seq:size(1)
+  assert(D == L-2, 'input Tensor should be 2 larger in time')
+
+  local loss = 0
+  local n = 0
+  for b=1,N do -- iterate over batches
+    local first_time = true
+    for t=2,L do -- iterate over sequence time (ignore t=1, dummy forward for the image)
+
+      -- fetch the index of the next token in the sequence
+      local target_index
+      if t-1 > D then -- we are out of bounds of the index sequence: pad with null tokens
+        target_index = 0
+      else
+        target_index = seq[{t-1,b}] -- t-1 is correct, since at t=2 START token was fed in and we want to predict first word (and 2-1 = 1).
+      end
+      -- the first time we see null token as next index, actually want the model to predict the END token
+      if target_index == 0 and first_time then
+        target_index = Mp1
+        first_time = false
+      end
+
+      -- if there is a non-null next token, enforce loss!
+      if target_index ~= 0 then
+        -- accumulate loss
+        loss = loss - input[{ t,b,target_index }] -- log(p)
+        self.gradInput[{ t,b,target_index }] = -1
+        n = n + 1
+      end
+
+    end
+  end
+  self.output = loss / n -- normalize by number of predictions that were made
+  self.gradInput:div(n)
+  return self.output
+end
+
+function crit:updateGradInput(input, seq)
   return self.gradInput
 end

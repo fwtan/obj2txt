@@ -7,7 +7,7 @@ local LSTM = require 'misc.LSTM'
 -- Language Model core
 -------------------------------------------------------------------------------
 
-local layer, parent = torch.class('nn.LayoutEncoder', 'nn.Module')
+local layer, parent = torch.class('nn.LanguageEncoder', 'nn.Module')
 function layer:__init(opt)
   parent.__init(self)
 
@@ -18,10 +18,9 @@ function layer:__init(opt)
   self.num_layers = utils.getopt(opt, 'num_layers', 1)
   local dropout = utils.getopt(opt, 'dropout', 0)
   -- options for Language Model
-  self.seq_length = utils.getopt(opt, 'layout_encoder_seq_length')
+  self.seq_length = utils.getopt(opt, 'seq_length')
   -- create the core lstm network. note +1 for both the START and END tokens
-  -- lstm_encoder outputs {cell_state, hidden_state}
-  self.core = LSTM.lstm_encoder(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout)
+  self.core = LSTM.lstm(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout)
   self.lookup_table = nn.LookupTable(self.vocab_size + 1, self.input_encoding_size)
   self:_createInitState(1) -- will be lazily resized later during forward passes
 end
@@ -45,7 +44,7 @@ end
 
 function layer:createClones()
   -- construct the net clones
-  print('constructing clones inside the LayoutEncoder')
+  print('constructing clones inside the LanguageEncoder')
   self.clones = {self.core}
   self.lookup_tables = {self.lookup_table}
   for t=2,self.seq_length+2 do
@@ -290,13 +289,13 @@ next token at every iteration of the LSTM (+2 because +1 for first dummy
 img forward, and another +1 because of START/END tokens shift)
 --]]
 function layer:updateOutput(input)
-  local seq = input
+  local imgs = input[1]
+  local seq = input[2]
   if self.clones == nil then self:createClones() end -- lazily create clones on first forward pass
+
   assert(seq:size(1) == self.seq_length)
   local batch_size = seq:size(2)
-  self.output:resize(self.seq_length+2, batch_size, self.rnn_size)
-
-  assert(self.rnn_size == self.input_encoding_size)
+  self.output:resize(self.seq_length+2, batch_size, self.vocab_size+1)
   
   self:_createInitState(batch_size)
 
@@ -310,8 +309,7 @@ function layer:updateOutput(input)
     local xt
     if t == 1 then
       -- feed in the images
-      xt = torch.zeros(batch_size, self.input_encoding_size) -- NxK sized input
-      if self.core:type() == 'torch.CudaTensor' then xt = xt:cuda() end
+      xt = imgs -- NxK sized input
     elseif t == 2 then
       -- feed in the start tokens
       local it = torch.LongTensor(batch_size):fill(self.vocab_size+1)
@@ -346,14 +344,14 @@ function layer:updateOutput(input)
       -- forward the network
       local out = self.clones[t]:forward(self.inputs[t])
       -- process the outputs
-      self.output[t] = out[self.num_state] -- last element is the hidden state
+      self.output[t] = out[self.num_state+1] -- last element is the output vector
       self.state[t] = {} -- the rest is state
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
       self.tmax = t
     end
   end
-  -- only want the hidden state at the last time-step
-  return self.output[self.tmax]
+
+  return self.output
 end
 
 --[[
@@ -363,13 +361,12 @@ function layer:updateGradInput(input, gradOutput)
   local dimgs -- grad on input images
 
   -- go backwards and lets compute gradients
-  -- gradOutput is the gradient of last hidden state
-  local dstate = {[self.tmax] = {self.init_state[1], gradOutput}} -- this works when init_state is all zeros
+  local dstate = {[self.tmax] = self.init_state} -- this works when init_state is all zeros
   for t=self.tmax,1,-1 do
     -- concat state gradients and output vector gradients at time step t
     local dout = {}
     for k=1,#dstate[t] do table.insert(dout, dstate[t][k]) end
-    -- lstm_encoder outputs {cell_state, hidden_state}
+    table.insert(dout, gradOutput[t])
     local dinputs = self.clones[t]:backward(self.inputs[t], dout)
     -- split the gradient to xt and to state
     local dxt = dinputs[1] -- first element is the input vector
@@ -386,7 +383,6 @@ function layer:updateGradInput(input, gradOutput)
   end
 
   -- we have gradient on image, but for LongTensor gt sequence we only create an empty tensor - can't backprop
-  -- self.gradInput = {dimgs, torch.Tensor()}
-  self.gradInput = {torch.Tensor()}
+  self.gradInput = {dimgs, torch.Tensor()}
   return self.gradInput
 end

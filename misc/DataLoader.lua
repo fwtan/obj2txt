@@ -88,6 +88,7 @@ function DataLoader:getBatch(opt)
   local label_batch = torch.LongTensor(batch_size * seq_per_img, self.seq_length)
   local category_batch = torch.LongTensor(batch_size, self.seq_length)
   local full_category_batch = torch.LongTensor(batch_size, self.seq_length*6)
+  -- local entry_level_concepts = torch.LongTensor(batch_size, self.seq_length*6)
   local bbox_batch = torch.LongTensor(batch_size, self.seq_length*6)
   local bbox_orgin_batch = torch.LongTensor(batch_size, self.seq_length*6)
   local max_index = #split_ix
@@ -109,6 +110,7 @@ function DataLoader:getBatch(opt)
 
     category_batch[i] = self.h5_file:read('/category'):partial({ix,ix}, {1, self.seq_length})
     full_category_batch[i] = self.h5_file:read('/full_category'):partial({ix,ix}, {1, self.seq_length*6})
+    -- entry_level_concepts[i] = self.h5_file:read('/entry_level_concepts'):partial({ix,ix}, {1, self.seq_length*6})
     bbox_batch[i] = self.h5_file:read('/bbox_resize'):partial({ix,ix}, {1, self.seq_length*6})
     bbox_orgin_batch[i] = self.h5_file:read('/bbox'):partial({ix,ix}, {1, self.seq_length*6})
 
@@ -147,6 +149,8 @@ function DataLoader:getBatch(opt)
   data.infos = infos
   data.category = category_batch
   data.full_category = full_category_batch
+  -- data.entry_level_concepts = entry_level_concepts
+  --data.full_category = data.entry_level_concepts
   data.bbox = bbox_batch
   data.bbox_orgin = bbox_orgin_batch
   return data
