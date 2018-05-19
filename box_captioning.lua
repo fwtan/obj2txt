@@ -45,41 +45,14 @@ COCO_label_dict = {
     ["toaster"]=80, ["sink"]=81, ["refrigerator"]=82, ["book"]=84, ["clock"]=85, 
     ["vase"]=86, ["scissors"]=87, ["teddy bear"]=88, ["hair drier"]=89, ["toothbrush"]=90}
 
--- coco_label2name = {
---     1: 'person', 2: 'bicycle', 
---     3: 'car', 4: 'motorcycle',
---     5: 'airplane', 6: 'bus', 
---     7: 'train', 8: 'truck', 
---     9: 'boat', 10: 'traffic light', 
---     11: 'fire hydrant', 13: 'stop sign', 
---     14: 'parking meter', 15: 'bench', 
---     16: 'bird', 17: 'cat', 
---     18: 'dog', 19: 'horse', 
---     20: 'sheep', 21: 'cow', 22: 'elephant', 23: 'bear', 
---     24: 'zebra', 25: 'giraffe', 27: 'backpack', 
---     28: 'umbrella', 31: 'handbag', 32: 'tie', 33: 'suitcase', 
---     34: 'frisbee', 35: 'skis', 36: 'snowboard', 37: 'sports ball', 
---     38: 'kite', 39: 'baseball bat', 40: 'baseball glove', 
---     41: 'skateboard', 42: 'surfboard', 43: 'tennis racket', 
---     44: 'bottle', 46: 'wine glass', 47: 'cup', 
---     48: 'fork', 49: 'knife', 50: 'spoon', 51: 'bowl', 
---     52: 'banana', 53: 'apple', 54: 'sandwich', 
---     55: 'orange', 56: 'broccoli', 57: 'carrot', 
---     58: 'hot dog', 59: 'pizza', 60: 'donut', 
---     61: 'cake', 62: 'chair', 63: 'couch', 64: 'potted plant', 
---     65: 'bed', 67: 'dining table', 70: 'toilet', 72: 'tv', 73: 'laptop', 74: 'mouse', 75: 'remote', 
---     76: 'keyboard', 77: 'cell phone', 78: 'microwave', 
---     79: 'oven', 80: 'toaster', 81: 'sink', 82: 'refrigerator', 
---     84: 'book', 85: 'clock', 86: 'vase', 87: 'scissors', 
---     88: 'teddy bear', 89: 'hair drier', 90: 'toothbrush'}
-    
-    
--- COCO_label_dict = {v:k for k, v in coco_label2name.items()}
 opt = {
     start_from = 'model_idfull_category_spatial_rnn_encoder_validate_1024.t7',
     input_dir = 'gt_scene_jsons',
     output_path = 'gt_scene_gen_sents.json',
 }
+
+for k,v in pairs(opt) do opt[k] = tonumber(os.getenv(k)) or os.getenv(k) or opt[k] end
+print(opt)
 
 vocab = torch.load('vocab.t7')
 
@@ -163,101 +136,3 @@ out_file = io.open(opt.output_path, "w")
 io.output(out_file)
 io.write(json_text)
 io.close(out_file)
-
-
--- async.http.listen('http://0.0.0.0:9001/', function(req,res)
---    print(req.body)
---    annotations = cjson.decode(req.body)
---    -- print(#annotations)
---    -- batch size is 1
---    -- local bbox_coords = torch.FloatTensor(1,#annotations,4):fill(0)
---    local bbox_coords = torch.FloatTensor(1,96,4):fill(0)
---    local full_category = torch.LongTensor(1,96):fill(0)
---    for k, v in pairs(annotations) do
---       bbox_coords[{1,k,1}] = v['left']
---       bbox_coords[{1,k,2}] = v['top']
---       bbox_coords[{1,k,3}] = v['width']
---       bbox_coords[{1,k,4}] = v['height']
---       full_category[{1,k}] = COCO_label_dict[v['label']]
---    end
---    bbox_coords:div(604)
-
---    local bbox_coords_T = bbox_coords:transpose(1,2):cuda()
---    local data_full_category_T = full_category:transpose(1,2):cuda()
---    local le_category_encoding = protos.le:forward({data_full_category_T, bbox_coords_T})
---    local sample_opts = { sample_max = 1, beam_size = 1, temperature = 1.0 }
---    local seq = protos.lm:sample(le_category_encoding, sample_opts)
---    local sents = net_utils.decode_sequence(vocab, seq)
---    print(sents[1])
---    res(sents[1], {['Content-Type']='text/html', ['Access-Control-Allow-Origin']='*'})
---    return
-      
-
---    -- if (req.body.path == nil and req.body.source == nil) then 
---    -- 	res("LoL", {['Content-Type']='text/html', ['Access-Control-Allow-Origin']='*'})
---    --      return
---    -- end
-
---    -- local input = nil
---    -- if (req.body.path) then
---    --    local filename = string.match(req.body.path.data, "[a-zA-Z0-9]+.[a-zA-Z]+$")
---    --    input = torch.Tensor(1, 1, 32, 128)
---    --    status, code = pcall(image.load,filename, 1, nil)
---    --    if not status then
---    -- 	res("LoL", {['Content-Type']='text/html', ['Access-Control-Allow-Origin']='*'})
---    --      return
---    --    end
---    --     input[1] = code
---    -- else
---    --    input = gm.Image():fromString(req.body['source'].data):toTensor('float','I','DHW')
---    --    input = input:float()
---    --  -- im = torch.FloatTensor(48, math.floor(scale*img:size(2)))
---    --  -- image.scale(im, img)
---    --    if input:size(2) ~= 48 then
---    --      new_width = 48 * input:size(3) / input:size(2)
---    --    	input = image.scale(input, new_width, 48)
---    --    end
---    --    --image.save('input.jpg', input)
---    --    local result = predict_seq(input[1])
---    --    --result = '{"boxes":[{"x":1,"y":1,"width":32, "height":32}]}'
---    --    print(result)
---    --    res(result, {['Content-Type']='text/html', ['Access-Control-Allow-Origin']='*'})
---    --    --image.save('kkk.png', input)
---    -- end
-
---    -- -- reference
---    -- -- https://github.com/benglard/waffle/blob/master/waffle/request.lua#L34
---    -- -- https://github.com/clementfarabet/graphicsmagick on image:load(tensor,colorSpace,dimensions)
---    -- local prediction = predict(input)
---    -- print(prediction)
---    -- res(prediction, {['Content-Type']='text/html', ['Access-Control-Allow-Origin']='*'})
-
---    -- async.fs.writeFile(req.body['source'].filename, req.body['source'].data, function()
---    --                       async.process.spawn('open', {req.body['source'].filename}, function()
---    --                                                               end))
-
---    -- local resp
---    -- if req.url.path == '/test' then
---    --    resp  = [[
---    --    <p>You requested route /test</p>
---    --    ]]
---    -- else
---    --    -- Produce a random story:
---    --    resp = [[
---    --    <h1>From my server</h1>
---    --    <p>It's working!<p>
---    --    <p>Randomly generated number: ${number}</p>
---    --    <p>A variable in the global scope: ${ret}</p>
---    --    ]] % {
---    --       number = math.random(),
---    --       ret = ret
---    --    }
---    -- end
-
---    -- -- res(resp, {['Content-Type']='text/html'})
-   
--- end)
-
--- print('server listening to port 9001')
-
--- async.go()
